@@ -1,0 +1,9 @@
+Revision history for Data-CountingBloomFilter-Shared
+
+0.01      2026-07-09
+          - Initial release. Shared-memory counting Bloom filter: approximate
+            set membership with delete (remove) and per-item occurrence counts
+            (count_of), on 4-bit saturating counters. XXH3-128 double hashing;
+            backed by a file, an anonymous mapping, or a memfd; write-preferring
+            futex rwlock with dead-process recovery. Counter-wise saturating
+            merge. Linux, 64-bit Perl.

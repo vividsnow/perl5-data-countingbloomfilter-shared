@@ -1,0 +1,12 @@
+.superpowers/
+/blib/
+/Makefile
+/Makefile.old
+/pm_to_blib
+/MYMETA.*
+/Shared.c
+*.o
+*.bs
+/ppport.h
+*.tar.gz
+/Data-CountingBloomFilter-Shared-*/

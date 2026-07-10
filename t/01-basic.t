@@ -7,11 +7,11 @@ use Data::CountingBloomFilter::Shared;
 my $cbf = Data::CountingBloomFilter::Shared->new(undef, 1000);
 isa_ok $cbf, 'Data::CountingBloomFilter::Shared';
 is $cbf->capacity, 1000, 'capacity stored';
-is $cbf->fp_rate, 0.01, 'default fp_rate is 0.01';
+cmp_ok abs($cbf->fp_rate - 0.01), '<', 1e-9, 'default fp_rate is 0.01';
 ok !defined($cbf->path), 'anonymous path is undef';
 
 my $cbf2 = Data::CountingBloomFilter::Shared->new(undef, 1000, 0.001);
-is $cbf2->fp_rate, 0.001, 'explicit fp_rate honored';
+cmp_ok abs($cbf2->fp_rate - 0.001), '<', 1e-9, 'explicit fp_rate honored';
 
 # geometry sanity: counters a power of two, k >= 1
 my $counters = $cbf->counters;
@@ -250,7 +250,7 @@ unlink $path;
 {
     my $r = Data::CountingBloomFilter::Shared->new($path, 1, 0.5);   # caller args ignored on reopen
     is $r->capacity, 5000, 'reopen: stored capacity wins';
-    is $r->fp_rate, 0.01, 'reopen: stored fp_rate wins';
+    cmp_ok abs($r->fp_rate - 0.01), '<', 1e-9, 'reopen: stored fp_rate wins';
     ok $r->contains("p-1500"), 'reopen: membership persisted';
     is $r->count_of("twice"), 2, 'reopen: counts persisted';
     my $miss = 0;

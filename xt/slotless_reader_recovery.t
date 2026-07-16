@@ -64,7 +64,7 @@ C
 close $fh;
 
 my $bin = "$dir/repro";
-my $log = `$cc -O2 -D_GNU_SOURCE -DBF_READER_SLOTS=1 -I. -o $bin $src -lpthread -lm 2>&1`;
+my $log = `$cc -O2 -D_GNU_SOURCE -DCBF_READER_SLOTS=1 -I. -o $bin $src -lpthread -lm 2>&1`;
 is($?, 0, 'reduced-slot harness compiles') or BAIL_OUT("compile failed:\n$log");
 
 for my $run (1 .. 4) {

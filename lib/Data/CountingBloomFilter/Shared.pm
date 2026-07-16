@@ -229,9 +229,10 @@ into, tests against, and removes from the same table>.
 Backing files are created with mode C<0600> (owner-only) by default, so only the
 creating user can open and attach them. To share a backing file across users,
 pass an explicit octal file mode such as C<0660> as the last argument to C<new>;
-the mode is applied only when the file is created (an existing file keeps its own
-permissions). The file is opened with C<O_NOFOLLOW>, so a symlink planted at the
-path is refused, and created with C<O_EXCL>; the on-disk header is validated when
+the mode is applied when the file is created; a pre-existing B<empty> file owned
+by the caller is adopted as new and likewise gets the requested mode, while a
+B<non-empty> existing file keeps its own permissions. The file is opened with
+C<O_NOFOLLOW>, so a symlink planted at the path is refused, and created with C<O_EXCL>; the on-disk header is validated when
 the file is attached. Any process you grant write access to a shared mapping is
 trusted not to corrupt its contents while other processes are using it.
 
@@ -242,6 +243,18 @@ ownership; if a holder dies, the next contender detects the dead owner and
 recovers. Each C<add> and C<remove> is a short sequence of counter updates, so a
 crash leaves the filter consistent up to the last completed operation.
 B<Limitation>: PID reuse is not detected (very unlikely in practice).
+
+Reader-slot exhaustion (slotless readers): dead-process recovery attributes a
+crashed lock holder's contribution through its reader-slot. The slot table holds
+1024 entries (one per concurrent reader process). If more than that many reader
+processes share one mapping at once, a reader that cannot claim a slot proceeds
+"slotless" -- it still takes the read lock but leaves no per-process record. If
+such a slotless reader is then killed while holding the read lock, its share of
+the lock cannot be attributed to a dead process, so writer recovery cannot
+reclaim it and writers may block until the mapping is recreated. Reaching this
+needs more than 1024 concurrent reader processes on one mapping plus a crash in
+the brief read-lock window; the dead-process slot reclaim keeps the table from
+filling with stale entries, so in practice it is very unlikely.
 
 =head1 SEE ALSO
 

@@ -9,7 +9,18 @@
     if (!sv_isobject(sv) || !sv_derived_from(sv, "Data::CountingBloomFilter::Shared")) \
         croak("Expected a Data::CountingBloomFilter::Shared object"); \
     CbfHandle *h = INT2PTR(CbfHandle*, SvIV(SvRV(sv))); \
-    if (!h) croak("Attempted to use a destroyed Data::CountingBloomFilter::Shared object")
+    if (!h) croak("Attempted to use a destroyed Data::CountingBloomFilter::Shared object"); \
+    sv_2mortal(SvREFCNT_inc(SvRV(sv)))
+
+/* Re-read the handle after a call that can run Perl code (tied/overloaded
+ * argument magic, tied-array fetches).  That code may call $obj->DESTROY
+ * explicitly, which frees the handle and zeroes the IV; EXTRACT's mortal pins
+ * the referent only against refcount-driven destruction, not an explicit
+ * DESTROY, so the local `h` would dangle.  Used only where magic can actually
+ * intervene between EXTRACT and the first use of h. */
+#define REEXTRACT(sv) \
+    h = INT2PTR(CbfHandle*, SvIV(SvRV(sv))); \
+    if (!h) croak("Data::CountingBloomFilter::Shared object destroyed during the call")
 
 #define MAKE_OBJ(class, handle) \
     SV *obj = newSViv(PTR2IV(handle)); \
@@ -30,7 +41,6 @@ new(class, path = &PL_sv_undef, capacity = 0, fp_rate = 0.01, ...)
   PREINIT:
     char errbuf[CBF_ERR_BUFLEN];
   CODE:
-    const char *p = (SvGETMAGIC(path), SvOK(path)) ? SvPV_nolen(path) : NULL;
     if (capacity < 1)
         croak("Data::CountingBloomFilter::Shared->new: capacity must be >= 1");
     if (!(fp_rate > 0.0 && fp_rate < 1.0))
@@ -39,6 +49,10 @@ new(class, path = &PL_sv_undef, capacity = 0, fp_rate = 0.01, ...)
      * (default 0600, owner-only). Pass e.g. 0660 to opt into cross-user
      * sharing. Ignored for anonymous segments and existing files. */
     mode_t mode = (items > 4 && (SvGETMAGIC(ST(4)), SvOK(ST(4)))) ? (mode_t)SvUV(ST(4)) : 0600;
+    /* Capture the path PV LAST, after ST(4) get-magic above: that magic can run
+     * arbitrary Perl that reallocs/frees path's PV, dangling the pointer before
+     * cbf_create() uses it. */
+    const char *p = (SvGETMAGIC(path), SvOK(path)) ? SvPV_nolen(path) : NULL;
     CbfHandle *h = cbf_create(p, (uint64_t)capacity, fp_rate, mode, errbuf);
     if (!h) croak("Data::CountingBloomFilter::Shared->new: %s", errbuf);
     MAKE_OBJ(class, h);
@@ -97,6 +111,7 @@ add(self, item)
     const char *s;
   CODE:
     s = SvPVbyte(item, n);                 /* may croak (wide char) -- BEFORE the lock */
+    REEXTRACT(self);
     cbf_rwlock_wrlock(h);
     RETVAL = cbf_add_locked(h, s, n);
     __atomic_fetch_add(&h->hdr->stat_ops, 1, __ATOMIC_RELAXED);
@@ -114,6 +129,7 @@ add_many(self, items)
     IV  top;
     UV  added = 0;
   CODE:
+    SvGETMAGIC(items);
     if (!SvROK(items) || SvTYPE(SvRV(items)) != SVt_PVAV)
         croak("Data::CountingBloomFilter::Shared->add_many: expected an array reference");
     av = (AV *)SvRV(items);
@@ -124,12 +140,23 @@ add_many(self, items)
         if (cnt) {                                       /* resolve all bytes BEFORE locking */
             Newx(ps, cnt, const char *); SAVEFREEPV(ps); /* freed on return OR unwind */
             Newx(ls, cnt, STRLEN);       SAVEFREEPV(ls);
-            for (i = 0; i < cnt; i++) {                  /* a croak here holds NO lock; SAVEFREEPV cleans up */
+            for (i = 0; i < cnt; i++) {                  /* a croak here holds NO lock; SAVEFREEPV + mortals clean up */
                 SV **el = av_fetch(av, (SSize_t)i, 0);
-                if (el && *el) ps[i] = SvPVbyte(*el, ls[i]);
-                else { ps[i] = ""; ls[i] = 0; }
+                if (el && *el) {
+                    STRLEN len;
+                    const char *src = SvPVbyte(*el, len); /* may run overload/tie/get-magic = arbitrary Perl */
+                    /* Copy the bytes into a private mortal SV NOW.  SvPVbyte on a
+                     * LATER element can run Perl that grows/frees THIS element's
+                     * PV buffer, dangling `src` before the locked loop hashes it
+                     * (heap-use-after-free).  The mortal copy is immune and is
+                     * freed on normal return or croak unwind. */
+                    SV *copy = sv_2mortal(newSVpvn(src, len));
+                    ps[i] = SvPVX_const(copy);
+                    ls[i] = len;
+                } else { ps[i] = ""; ls[i] = 0; }
             }
         }
+        REEXTRACT(self);
         cbf_rwlock_wrlock(h);                             /* locked region: NO croak-capable calls */
         for (i = 0; i < cnt; i++) added += (UV)cbf_add_locked(h, ps[i], ls[i]);
         __atomic_fetch_add(&h->hdr->stat_ops, 1, __ATOMIC_RELAXED);  /* a call always counts, even an empty batch */
@@ -149,6 +176,7 @@ contains(self, item)
     const char *s;
   CODE:
     s = SvPVbyte(item, n);                 /* may croak (wide char) -- BEFORE the lock */
+    REEXTRACT(self);
     cbf_rwlock_rdlock(h);
     RETVAL = cbf_contains_locked(h, s, n);
     cbf_rwlock_rdunlock(h);
@@ -165,6 +193,7 @@ count_of(self, item)
     const char *s;
   CODE:
     s = SvPVbyte(item, n);                 /* may croak (wide char) -- BEFORE the lock */
+    REEXTRACT(self);
     cbf_rwlock_rdlock(h);
     RETVAL = cbf_count_of_locked(h, s, n);
     cbf_rwlock_rdunlock(h);
@@ -181,6 +210,7 @@ remove(self, item)
     const char *s;
   CODE:
     s = SvPVbyte(item, n);                 /* may croak (wide char) -- BEFORE the lock */
+    REEXTRACT(self);
     cbf_rwlock_wrlock(h);
     RETVAL = cbf_remove_locked(h, s, n);
     __atomic_fetch_add(&h->hdr->stat_ops, 1, __ATOMIC_RELAXED);

@@ -19,6 +19,8 @@
  * DESTROY, so the local `h` would dangle.  Used only where magic can actually
  * intervene between EXTRACT and the first use of h. */
 #define REEXTRACT(sv) \
+    if (!SvROK(sv)) \
+        croak("Data::CountingBloomFilter::Shared object was replaced during the call"); \
     h = INT2PTR(CbfHandle*, SvIV(SvRV(sv))); \
     if (!h) croak("Data::CountingBloomFilter::Shared object destroyed during the call")
 
@@ -229,6 +231,10 @@ merge(self, other)
         croak("Data::CountingBloomFilter::Shared->merge: expected a Data::CountingBloomFilter::Shared object");
     CbfHandle *o = INT2PTR(CbfHandle*, SvIV(SvRV(other)));
     if (!o) croak("Attempted to use a destroyed Data::CountingBloomFilter::Shared object");
+    /* sv_isobject/sv_derived_from above begin with SvGETMAGIC(other), so a
+     * tied `other` can have destroyed self before h is used below. `o` was
+     * read after that magic and needs no re-read. */
+    REEXTRACT(self);
 
     /* m_ctr and k are immutable after creation -- compare lock-free, croak
      * BEFORE allocating, so a mismatch holds no lock and leaks no buffer. */

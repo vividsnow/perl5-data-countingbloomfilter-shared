@@ -57,6 +57,8 @@ jobs:
           perl-version: '5.40'
       - run: cpanm -n Devel::PPPort
       - run: perl Makefile.PL && make && make test
+      - name: Shared-memory author tests
+        run: AUTHOR_TESTING=1 prove -b xt/lock_wakeup.t xt/freeze_race.t xt/fork_cbf.t
 
   test-ubsan:
     runs-on: ubuntu-latest
@@ -104,6 +106,6 @@ jobs:
           perl-version: '5.40'
       - run: cpanm -n Devel::PPPort Time::HiRes Test::Pod
       - run: perl Makefile.PL && make
-      - run: AUTHOR_TESTING=1 prove -b -j2 xt/*.t
+      - run: AUTHOR_TESTING=1 prove -b xt/*.t
         env:
           AUTHOR_TESTING: 1
